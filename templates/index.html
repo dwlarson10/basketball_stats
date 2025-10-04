@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NBA Stats Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        header {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .controls {
+            display: flex;
+            gap: 20px;
+            padding: 30px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+            flex-wrap: wrap;
+        }
+
+        .control-group {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #495057;
+            font-size: 0.9rem;
+        }
+
+        select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #dee2e6;
+            border-radius: 8px;
+            font-size: 1rem;
+            background: white;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        select:hover {
+            border-color: #667eea;
+        }
+
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .stats-container {
+            padding: 30px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 60px;
+            color: #6c757d;
+            font-size: 1.2rem;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .table-wrapper {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+
+        thead {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        th {
+            padding: 15px 10px;
+            text-align: left;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        td {
+            padding: 12px 10px;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        tbody tr {
+            transition: background-color 0.2s;
+        }
+
+        tbody tr:hover {
+            background-color: #f8f9fa;
+        }
+
+        .stat-highlight {
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 60px;
+            color: #6c757d;
+        }
+
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            padding: 20px;
+            margin: 20px;
+            border-radius: 8px;
+            border: 1px solid #f5c6cb;
+        }
+
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 1.8rem;
+            }
+
+            .controls {
+                flex-direction: column;
+            }
+
+            table {
+                font-size: 0.8rem;
+            }
+
+            th, td {
+                padding: 8px 5px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>NBA Stats Dashboard</h1>
+            <p class="subtitle">Monitor player statistics by team</p>
+        </header>
+
+        <div class="controls">
+            <div class="control-group">
+                <label for="teamSelect">Select Team:</label>
+                <select id="teamSelect">
+                    <option value="">-- Choose a team --</option>
+                    {% for team in teams %}
+                    <option value="{{ team.id }}">{{ team.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label for="seasonSelect">Select Season:</label>
+                <select id="seasonSelect">
+                    {% for season in seasons %}
+                    <option value="{{ season }}" {% if loop.first %}selected{% endif %}>{{ season }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        <div class="stats-container">
+            <div class="loading" id="loadingMessage">
+                <p>Select a team to view player statistics</p>
+            </div>
+
+            <div class="table-wrapper" id="statsTable" style="display: none;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Player</th>
+                            <th>Age</th>
+                            <th>GP</th>
+                            <th>MIN</th>
+                            <th>PTS</th>
+                            <th>REB</th>
+                            <th>AST</th>
+                            <th>STL</th>
+                            <th>BLK</th>
+                            <th>FG%</th>
+                            <th>3P%</th>
+                            <th>FT%</th>
+                            <th>TS%</th>
+                            <th>USG%</th>
+                            <th>OFF RTG</th>
+                            <th>DEF RTG</th>
+                            <th>NET RTG</th>
+                        </tr>
+                    </thead>
+                    <tbody id="statsBody">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const teamSelect = document.getElementById('teamSelect');
+        const seasonSelect = document.getElementById('seasonSelect');
+        const loadingMessage = document.getElementById('loadingMessage');
+        const statsTable = document.getElementById('statsTable');
+        const statsBody = document.getElementById('statsBody');
+
+        function formatPercent(value) {
+            if (value === null || value === undefined) return '-';
+            return (value * 100).toFixed(1) + '%';
+        }
+
+        function formatNumber(value, decimals = 1) {
+            if (value === null || value === undefined) return '-';
+            return Number(value).toFixed(decimals);
+        }
+
+        async function loadPlayerStats(teamId, season) {
+            loadingMessage.innerHTML = '<div class="spinner"></div><p>Loading player statistics...</p>';
+            loadingMessage.style.display = 'block';
+            statsTable.style.display = 'none';
+
+            try {
+                const response = await fetch(`/api/players/${teamId}?season=${season}`);
+                if (!response.ok) throw new Error('Failed to fetch player stats');
+
+                const players = await response.json();
+
+                if (players.length === 0) {
+                    loadingMessage.innerHTML = '<p class="no-data">No player data available for this team and season.</p>';
+                    return;
+                }
+
+                statsBody.innerHTML = players.map(player => `
+                    <tr>
+                        <td class="stat-highlight">${player.PLAYER_NAME}</td>
+                        <td>${player.AGE || '-'}</td>
+                        <td>${player.GP || '-'}</td>
+                        <td>${formatNumber(player.MIN)}</td>
+                        <td class="stat-highlight">${formatNumber(player.PTS)}</td>
+                        <td>${formatNumber(player.REB)}</td>
+                        <td>${formatNumber(player.AST)}</td>
+                        <td>${formatNumber(player.STL)}</td>
+                        <td>${formatNumber(player.BLK)}</td>
+                        <td>${formatPercent(player.FG_PCT)}</td>
+                        <td>${formatPercent(player.FG3_PCT)}</td>
+                        <td>${formatPercent(player.FT_PCT)}</td>
+                        <td>${formatPercent(player.TS_PCT)}</td>
+                        <td>${formatPercent(player.USG_PCT)}</td>
+                        <td>${formatNumber(player.OFF_RATING)}</td>
+                        <td>${formatNumber(player.DEF_RATING)}</td>
+                        <td>${formatNumber(player.NET_RATING)}</td>
+                    </tr>
+                `).join('');
+
+                loadingMessage.style.display = 'none';
+                statsTable.style.display = 'block';
+
+            } catch (error) {
+                loadingMessage.innerHTML = `<div class="error">Error loading player stats: ${error.message}</div>`;
+            }
+        }
+
+        teamSelect.addEventListener('change', (e) => {
+            const teamId = e.target.value;
+            const season = seasonSelect.value;
+            if (teamId) {
+                loadPlayerStats(teamId, season);
+            } else {
+                loadingMessage.innerHTML = '<p>Select a team to view player statistics</p>';
+                loadingMessage.style.display = 'block';
+                statsTable.style.display = 'none';
+            }
+        });
+
+        seasonSelect.addEventListener('change', (e) => {
+            const teamId = teamSelect.value;
+            const season = e.target.value;
+            if (teamId) {
+                loadPlayerStats(teamId, season);
+            }
+        });
+    </script>
+</body>
+</html>

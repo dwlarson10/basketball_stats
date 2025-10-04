@@ -1,0 +1,7 @@
+flask==3.0.0
+duckdb==0.9.2
+pandas==2.1.4
+pyarrow==14.0.1
+nba_api==1.4.1
+tqdm==4.66.1
+tenacity==8.2.3
