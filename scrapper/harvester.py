@@ -162,19 +162,40 @@ def harvest(cfg: PullConfig) -> None:
     teams.to_parquet(teams_path, index=False)
     print(f"Saved players → {players_path} ({len(players):,} rows)")
     print(f"Saved teams   → {teams_path} ({len(teams):,} rows)")
-
+    
     # Optional: DuckDB sink
     if cfg.duckdb_path:
         if duckdb is None:
             raise RuntimeError("duckdb package not installed; pip install duckdb")
         con = duckdb.connect(cfg.duckdb_path)
-        con.execute("CREATE SCHEMA IF NOT EXISTS nba;")
-        con.register("players_df", players)
-        con.register("teams_df", teams)
-        con.execute("CREATE OR REPLACE TABLE nba.players_40y AS SELECT * FROM players_df;")
-        con.execute("CREATE OR REPLACE TABLE nba.teams_40y AS SELECT * FROM teams_df;")
+
+        # Check if tables exist
+        tables_exist = con.execute("""
+            SELECT COUNT(*) FROM information_schema.tables
+            WHERE table_name IN ('players_40y', 'teams_40y')
+        """).fetchone()[0] > 0
+
+        if tables_exist:
+            # Incremental update: delete existing data for these seasons and insert new
+            seasons_list = ', '.join([f"'{s}'" for s in seasons])
+            con.execute(f"DELETE FROM players_40y WHERE SEASON IN ({seasons_list})")
+            con.execute(f"DELETE FROM teams_40y WHERE SEASON IN ({seasons_list})")
+
+            # Insert new data
+            con.register("players_df", players)
+            con.register("teams_df", teams)
+            con.execute("INSERT INTO players_40y SELECT * FROM players_df")
+            con.execute("INSERT INTO teams_40y SELECT * FROM teams_df")
+            print(f"Updated seasons {seasons_list} in {cfg.duckdb_path}")
+        else:
+            # Full rebuild: create tables from scratch
+            con.register("players_df", players)
+            con.register("teams_df", teams)
+            con.execute("CREATE OR REPLACE TABLE players_40y AS SELECT * FROM players_df;")
+            con.execute("CREATE OR REPLACE TABLE teams_40y AS SELECT * FROM teams_df;")
+            print(f"Created tables players_40y & teams_40y → {cfg.duckdb_path}")
+
         con.close()
-        print(f"Wrote tables nba.players_40y & nba.teams_40y → {cfg.duckdb_path}")
 
 # -------------
 # CLI

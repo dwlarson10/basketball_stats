@@ -12,6 +12,9 @@ Usage:
 from flask import Flask, render_template, request, jsonify
 import duckdb
 import os
+import subprocess
+import sys
+from datetime import datetime
 from typing import List, Dict, Any
 
 app = Flask(__name__)
@@ -35,33 +38,55 @@ def get_db_connection():
 
 def get_table_name(con, base_name: str) -> str:
     """Determine the correct table name (with or without schema prefix)."""
-    # Try to find the table with nba schema first, then without
-    try:
-        con.execute(f"SELECT 1 FROM nba.{base_name} LIMIT 1")
-        return f"nba.{base_name}"
-    except:
-        return base_name
+    # Tables are in main schema, not nba schema
+    return base_name
 
-def get_teams() -> List[Dict[str, Any]]:
-    """Get list of unique teams from the most recent season."""
+def get_leagues() -> List[str]:
+    """Get list of available leagues."""
+    # For now, return the hardcoded list of leagues
+    # In the future, this could be dynamic based on database content
+    return ["NBA", "WNBA", "International"]
+
+def get_teams(league: str = "NBA") -> List[Dict[str, Any]]:
+    """Get list of unique teams from the most recent season for a specific league."""
     con = get_db_connection()
     table_name = get_table_name(con, "teams_40y")
+
+    # Define team ID ranges for each league
+    # NBA: 1610612700-1610612799
+    # WNBA: 1611661300-1611661399
+    # International/Other: everything else
+    league_filters = {
+        "NBA": "AND CAST(TEAM_ID AS BIGINT) BETWEEN 1610612700 AND 1610612799",
+        "WNBA": "AND CAST(TEAM_ID AS BIGINT) BETWEEN 1611661300 AND 1611661399",
+        "International": "AND (CAST(TEAM_ID AS BIGINT) < 1610612700 OR CAST(TEAM_ID AS BIGINT) BETWEEN 1612709800 AND 1612709999)"
+    }
+
+    league_filter = league_filters.get(league, "")
 
     query = f"""
     SELECT DISTINCT TEAM_ID, TEAM_NAME
     FROM {table_name}
     WHERE SEASON = (SELECT MAX(SEASON) FROM {table_name})
       AND MEASURE = 'Base'
+      {league_filter}
     ORDER BY TEAM_NAME
     """
 
     result = con.execute(query).fetchall()
     con.close()
 
-    return [{"id": row[0], "name": row[1]} for row in result]
+    return [{"id": int(row[0]), "name": row[1]} for row in result]
 
 def get_player_stats(team_id: int, season: str = None) -> List[Dict[str, Any]]:
     """Get player statistics for a specific team."""
+    # TODO: INVESTIGATE HERE - This is where the SQL query runs and could fail with "string did not match"
+    # The error might be a DuckDB error caused by:
+    # 1. TEAM_ID type mismatch - check if TEAM_ID in the database is BIGINT but you're passing INT
+    # 2. SEASON format issue - ensure season string matches format in database (e.g., "2024-25")
+    # 3. Column name mismatch between what's queried and what exists in the table
+    # TIP: Try running this query directly in DuckDB with test values to see the exact error
+    # TIP: Add try-except around con.execute() to catch and log the specific DuckDB error
     con = get_db_connection()
     table_name = get_table_name(con, "players_40y")
 
@@ -151,21 +176,34 @@ def get_available_seasons() -> List[str]:
 @app.route('/')
 def index():
     """Main dashboard page."""
-    teams = get_teams()
+    leagues = get_leagues()
     seasons = get_available_seasons()
-    return render_template('index.html', teams=teams, seasons=seasons)
+    return render_template('index.html', leagues=leagues, seasons=seasons)
 
 @app.route('/api/players/<int:team_id>')
 def api_players(team_id: int):
     """API endpoint to get player stats for a team."""
+    # TODO: INVESTIGATE HERE - The "string did not match" error likely occurs in this endpoint
+    # Check the following:
+    # 1. Is team_id being passed correctly as an integer?
+    # 2. Is the season parameter being parsed correctly from the query string?
+    # 3. Does the database query in get_player_stats() handle the inputs properly?
+    # TIP: Add error handling and logging here to see what values are being received
     season = request.args.get('season', None)
     players = get_player_stats(team_id, season)
     return jsonify(players)
 
+@app.route('/api/leagues')
+def api_leagues():
+    """API endpoint to get all leagues."""
+    leagues = get_leagues()
+    return jsonify(leagues)
+
 @app.route('/api/teams')
 def api_teams():
-    """API endpoint to get all teams."""
-    teams = get_teams()
+    """API endpoint to get all teams for a specific league."""
+    league = request.args.get('league', 'NBA')
+    teams = get_teams(league)
     return jsonify(teams)
 
 @app.route('/api/seasons')
@@ -173,6 +211,65 @@ def api_seasons():
     """API endpoint to get available seasons."""
     seasons = get_available_seasons()
     return jsonify(seasons)
+
+@app.route('/api/refresh-data', methods=['POST'])
+def api_refresh_data():
+    """API endpoint to trigger data refresh from NBA API."""
+    try:
+        # Get the most recent season in the database to determine what to pull
+        con = get_db_connection()
+        table_name = get_table_name(con, "players_40y")
+        latest_season = con.execute(f"SELECT MAX(SEASON) FROM {table_name}").fetchone()[0]
+        con.close()
+
+        # Parse the latest season (e.g., "2024-25" -> 2024)
+        if latest_season:
+            start_year = int(latest_season.split('-')[0])
+        else:
+            start_year = datetime.now().year
+
+        # Only pull current season (incremental update)
+        current_year = datetime.now().year
+
+        # Run the harvester script
+        harvester_path = os.path.join(os.path.dirname(__file__), 'scrapper', 'harvester.py')
+        result = subprocess.run(
+            [
+                sys.executable,
+                harvester_path,
+                '--start-year', str(current_year),
+                '--end-year', str(current_year),
+                '--out', DATA_DIR,
+                '--duckdb', DUCKDB_PATH
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300  # 5 minute timeout
+        )
+
+        if result.returncode == 0:
+            return jsonify({
+                'success': True,
+                'message': f'Data refreshed successfully for {current_year}-{str(current_year+1)[-2:]} season',
+                'output': result.stdout
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'Failed to refresh data',
+                'error': result.stderr
+            }), 500
+
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            'success': False,
+            'message': 'Data refresh timed out after 5 minutes'
+        }), 500
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Error refreshing data: {str(e)}'
+        }), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)

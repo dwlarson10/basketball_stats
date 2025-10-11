@@ -32,6 +32,7 @@
             color: white;
             padding: 30px;
             text-align: center;
+            position: relative;
         }
 
         h1 {
@@ -41,6 +42,38 @@
 
         .subtitle {
             font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .refresh-btn {
+            position: absolute;
+            top: 30px;
+            right: 30px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid white;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .refresh-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .refresh-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .refresh-status {
+            position: absolute;
+            top: 75px;
+            right: 30px;
+            font-size: 0.85rem;
             opacity: 0.9;
         }
 
@@ -193,18 +226,26 @@
 <body>
     <div class="container">
         <header>
-            <h1>NBA Stats Dashboard</h1>
-            <p class="subtitle">Monitor player statistics by team</p>
+            <h1>Basketball Stats Dashboard</h1>
+            <p class="subtitle">Monitor player statistics by league and team</p>
+            <button id="refreshBtn" class="refresh-btn">↻ Refresh Data</button>
+            <div id="refreshStatus" class="refresh-status"></div>
         </header>
 
         <div class="controls">
             <div class="control-group">
+                <label for="leagueSelect">Select League:</label>
+                <select id="leagueSelect">
+                    {% for league in leagues %}
+                    <option value="{{ league }}" {% if league == 'NBA' %}selected{% endif %}>{{ league }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="control-group">
                 <label for="teamSelect">Select Team:</label>
                 <select id="teamSelect">
                     <option value="">-- Choose a team --</option>
-                    {% for team in teams %}
-                    <option value="{{ team.id }}">{{ team.name }}</option>
-                    {% endfor %}
                 </select>
             </div>
 
@@ -254,6 +295,7 @@
     </div>
 
     <script>
+        const leagueSelect = document.getElementById('leagueSelect');
         const teamSelect = document.getElementById('teamSelect');
         const seasonSelect = document.getElementById('seasonSelect');
         const loadingMessage = document.getElementById('loadingMessage');
@@ -268,6 +310,29 @@
         function formatNumber(value, decimals = 1) {
             if (value === null || value === undefined) return '-';
             return Number(value).toFixed(decimals);
+        }
+
+        async function loadTeams(league) {
+            teamSelect.innerHTML = '<option value="">-- Choose a team --</option>';
+            teamSelect.disabled = true;
+
+            try {
+                const response = await fetch(`/api/teams?league=${league}`);
+                if (!response.ok) throw new Error('Failed to fetch teams');
+
+                const teams = await response.json();
+
+                teams.forEach(team => {
+                    const option = document.createElement('option');
+                    option.value = team.id;
+                    option.textContent = team.name;
+                    teamSelect.appendChild(option);
+                });
+
+                teamSelect.disabled = false;
+            } catch (error) {
+                loadingMessage.innerHTML = `<div class="error">Error loading teams: ${error.message}</div>`;
+            }
         }
 
         async function loadPlayerStats(teamId, season) {
@@ -316,6 +381,14 @@
             }
         }
 
+        leagueSelect.addEventListener('change', (e) => {
+            const league = e.target.value;
+            loadTeams(league);
+            loadingMessage.innerHTML = '<p>Select a team to view player statistics</p>';
+            loadingMessage.style.display = 'block';
+            statsTable.style.display = 'none';
+        });
+
         teamSelect.addEventListener('change', (e) => {
             const teamId = e.target.value;
             const season = seasonSelect.value;
@@ -333,6 +406,53 @@
             const season = e.target.value;
             if (teamId) {
                 loadPlayerStats(teamId, season);
+            }
+        });
+
+        // Load teams for the default league on page load
+        loadTeams(leagueSelect.value);
+
+        // Refresh data button handler
+        const refreshBtn = document.getElementById('refreshBtn');
+        const refreshStatus = document.getElementById('refreshStatus');
+
+        refreshBtn.addEventListener('click', async () => {
+            refreshBtn.disabled = true;
+            refreshStatus.textContent = 'Refreshing data...';
+
+            try {
+                const response = await fetch('/api/refresh-data', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    refreshStatus.textContent = '✓ Data refreshed successfully!';
+                    refreshStatus.style.color = '#90EE90';
+
+                    // Reload the current view if a team is selected
+                    const teamId = teamSelect.value;
+                    const season = seasonSelect.value;
+                    if (teamId) {
+                        loadPlayerStats(teamId, season);
+                    }
+
+                    setTimeout(() => {
+                        refreshStatus.textContent = '';
+                    }, 5000);
+                } else {
+                    refreshStatus.textContent = '✗ ' + result.message;
+                    refreshStatus.style.color = '#ffcccc';
+                }
+            } catch (error) {
+                refreshStatus.textContent = '✗ Error: ' + error.message;
+                refreshStatus.style.color = '#ffcccc';
+            } finally {
+                refreshBtn.disabled = false;
             }
         });
     </script>
