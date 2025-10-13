@@ -35,6 +35,27 @@
             position: relative;
         }
 
+        .nav-links {
+            position: absolute;
+            top: 30px;
+            left: 30px;
+        }
+
+        .nav-links a {
+            color: white;
+            text-decoration: none;
+            padding: 10px 20px;
+            border: 2px solid white;
+            border-radius: 6px;
+            font-weight: 600;
+            transition: all 0.3s;
+            display: inline-block;
+        }
+
+        .nav-links a:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
         h1 {
             font-size: 2.5rem;
             margin-bottom: 10px;
@@ -226,6 +247,9 @@
 <body>
     <div class="container">
         <header>
+            <div class="nav-links">
+                <a href="/matchup">Team Matchup →</a>
+            </div>
             <h1>Basketball Stats Dashboard</h1>
             <p class="subtitle">Monitor player statistics by league and team</p>
             <button id="refreshBtn" class="refresh-btn">↻ Refresh Data</button>

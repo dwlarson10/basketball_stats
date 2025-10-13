@@ -1,0 +1,321 @@
+================================================================================
+SESSION LOG - Basketball Stats Application Updates
+================================================================================
+Date: October 12, 2025
+Session Duration: ~2 hours
+
+================================================================================
+ISSUE #1: DATA REFRESH NOT ADDING NEW SEASON (WNBA 2025-26)
+================================================================================
+
+PROBLEM IDENTIFIED:
+- WNBA 2025 season (labeled as 2025-26 in NBA Stats API) was not appearing
+- Database only contained NBA data, missing WNBA completely
+- Root cause: Harvester script was missing `league_id` parameter required by NBA Stats API
+  * NBA requires league_id='00'
+  * WNBA requires league_id='10'
+  * G-League requires league_id='20'
+
+SOLUTION IMPLEMENTED:
+
+1. Updated Harvester Script (scrapper/harvester.py)
+   ------------------------------------------------------------------------
+   Changes:
+   - Added league_id parameter to PullConfig dataclass (line 70)
+   - Updated _call_players() function to accept and pass league_id_nullable (line 85)
+   - Updated _call_teams() function to accept and pass league_id_nullable (line 108)
+   - Added LEAGUE_ID column to dataframes (lines 99, 122)
+   - Updated harvest() function to pass league_id to API calls (lines 142, 149)
+   - Fixed DELETE logic to only remove data for specific league (lines 186-187)
+   - Added --league-id CLI argument with choices ["00", "10", "20"] (line 215)
+
+2. Updated Flask Application (app.py)
+   ------------------------------------------------------------------------
+   Changes:
+   - Updated api_refresh_data() to fetch both NBA and WNBA data (lines 248-269)
+   - Loop through both league_id='00' (NBA) and league_id='10' (WNBA)
+   - Run harvester twice per refresh (once for each league)
+   - Improved error handling and reporting per league
+
+3. Database Schema Update
+   ------------------------------------------------------------------------
+   - Added LEAGUE_ID column to existing tables (players_40y, teams_40y)
+   - Dropped and rebuilt tables to fix schema mismatches
+   - Populated with data from 2023-2025 for both NBA and WNBA
+
+RESULTS:
+- Database now contains:
+  * 2025-26 WNBA: 182 players (NEW! Season that just ended)
+  * 2024-25 NBA: 569 players
+  * 2024-25 WNBA: 157 players
+  * 2023-24 NBA: 572 players
+  * 2023-24 WNBA: 156 players
+
+- Sample WNBA 2025-26 players:
+  * A'ja Wilson (LVA) - 23.4 PPG, 10.2 RPG, 3.1 APG
+  * Napheesa Collier (MIN) - 22.9 PPG, 7.3 RPG, 3.2 APG
+  * Kelsey Mitchell (IND) - 20.2 PPG, 1.8 RPG, 3.4 APG
+
+================================================================================
+FEATURE #2: HEAD-TO-HEAD TEAM MATCHUP PAGE
+================================================================================
+
+NEW FUNCTIONALITY:
+Created a complete head-to-head matchup system for comparing team statistics
+
+1. Backend API Endpoints (app.py)
+   ------------------------------------------------------------------------
+   Added Functions:
+   - get_team_stats(team_id, season) [lines 176-255]
+     * Fetches aggregated team statistics
+     * Merges Base and Advanced measures from teams_40y table
+     * Returns comprehensive team metrics including:
+       - Basic stats: GP, W, L, W_PCT, FGM, FGA, FG_PCT, etc.
+       - Advanced stats: OFF_RATING, DEF_RATING, NET_RATING, TS_PCT, PACE, etc.
+
+   New API Routes:
+   - GET /matchup [line 264]
+     * Renders the matchup HTML page
+     * Passes leagues and seasons to template
+
+   - GET /api/team-stats/<team_id> [line 303]
+     * Returns full team statistics for a single team
+     * Query params: ?season=YYYY-YY
+
+   - GET /api/matchup [line 310]
+     * Returns side-by-side comparison of two teams
+     * Query params: ?team1_id=X&team2_id=Y&season=YYYY-YY
+     * Response format:
+       {
+         "team1": { ...stats... },
+         "team2": { ...stats... },
+         "season": "2025-26"
+       }
+
+2. Frontend Template (templates/matchup.html)
+   ------------------------------------------------------------------------
+   Created new HTML page with:
+
+   UI Components:
+   - League selector (NBA/WNBA/International)
+   - Season selector
+   - Two team dropdowns (Team 1 and Team 2)
+   - "Compare Teams" button (disabled until valid selection)
+   - Loading states and error handling
+
+   Visual Design:
+   - Gradient purple/blue header matching main dashboard
+   - Side-by-side comparison layout with "VS" divider
+   - Team header cards showing:
+     * Team name
+     * Win-loss record and win percentage
+
+   Stats Display:
+   - Offensive Stats Section:
+     * Points Per Game
+     * Field Goal %
+     * 3-Point %
+     * Offensive Rating
+
+   - Defensive Stats Section:
+     * Defensive Rating
+     * Rebounds Per Game
+     * Steals Per Game
+     * Blocks Per Game
+
+   - Comprehensive Comparison Table (16 metrics):
+     * Win %, Points, FG%, 3P%, FT%
+     * Rebounds, Assists, Steals, Blocks, Turnovers
+     * Offensive Rating, Defensive Rating, Net Rating
+     * True Shooting %, Effective FG %, Pace
+
+   Interactive Features:
+   - Color-coded highlighting (green) for better stats
+   - Difference column showing statistical gap
+   - Responsive design for mobile devices
+   - Dynamic team loading based on league selection
+   - Prevents comparing a team against itself
+
+3. Navigation Updates (templates/index.html)
+   ------------------------------------------------------------------------
+   Added:
+   - "Team Matchup →" navigation link in header (top left)
+   - CSS styles for navigation buttons
+   - Consistent styling with matchup page
+
+================================================================================
+FILE CHANGES SUMMARY
+================================================================================
+
+Modified Files:
+1. scrapper/harvester.py
+   - Added league_id support throughout
+   - Updated API calls to include league_id_nullable
+   - Fixed incremental update logic to be league-specific
+   - Added CLI argument for league selection
+
+2. app.py
+   - Added get_team_stats() function
+   - Added /matchup route
+   - Added /api/team-stats/<team_id> endpoint
+   - Added /api/matchup endpoint
+   - Updated /api/refresh-data to fetch both NBA and WNBA
+
+3. templates/index.html
+   - Added navigation link to matchup page
+   - Added CSS for navigation styling
+
+New Files:
+1. templates/matchup.html
+   - Complete head-to-head comparison page
+   - 700+ lines of HTML, CSS, and JavaScript
+   - Fully functional team comparison interface
+
+2. session.log (this file)
+   - Comprehensive documentation of all changes
+
+Database Files:
+1. data/nba.duckdb
+   - Rebuilt with LEAGUE_ID column
+   - Now contains both NBA and WNBA data
+   - Covers seasons 2023-24, 2024-25, 2025-26
+
+2. data/nba_backup.duckdb
+   - Created as safety backup before rebuild
+
+================================================================================
+COMMAND LINE USAGE
+================================================================================
+
+Running the Harvester:
+----------------------
+# Fetch NBA data
+python scrapper/harvester.py --start-year 2024 --end-year 2025 --league-id 00 --out data/ --duckdb data/nba.duckdb
+
+# Fetch WNBA data
+python scrapper/harvester.py --start-year 2024 --end-year 2025 --league-id 10 --out data/ --duckdb data/nba.duckdb
+
+# Fetch both (run sequentially)
+python scrapper/harvester.py --start-year 2025 --end-year 2025 --league-id 00 --out data/ --duckdb data/nba.duckdb && \
+python scrapper/harvester.py --start-year 2025 --end-year 2025 --league-id 10 --out data/ --duckdb data/nba.duckdb
+
+Running the Flask App:
+---------------------
+python app.py
+# or
+flask run --debug
+
+Accessing the Application:
+-------------------------
+Main Dashboard: http://localhost:5000/
+Team Matchup:   http://localhost:5000/matchup
+
+================================================================================
+TESTING PERFORMED
+================================================================================
+
+1. Data Harvesting:
+   ✓ Successfully fetched NBA 2024-25 season (569 players)
+   ✓ Successfully fetched WNBA 2024-25 season (157 players)
+   ✓ Successfully fetched WNBA 2025-26 season (182 players)
+   ✓ Verified league_id column added correctly
+   ✓ Tested incremental updates don't overwrite other league data
+
+2. Database Verification:
+   ✓ Confirmed season breakdown by league
+   ✓ Verified WNBA 2025-26 player stats (A'ja Wilson, Napheesa Collier, etc.)
+   ✓ Verified NBA 2024-25 player stats (Shai Gilgeous-Alexander, Giannis, etc.)
+   ✓ Checked data integrity across seasons
+
+3. API Endpoints:
+   ✓ /api/teams?league=WNBA returns correct teams
+   ✓ /api/team-stats/<team_id> returns complete team statistics
+   ✓ /api/matchup correctly compares two teams
+   ✓ Error handling for missing teams
+
+4. Frontend:
+   ✓ Team dropdowns populate correctly per league
+   ✓ Compare button enables/disables appropriately
+   ✓ Matchup display shows correct statistics
+   ✓ Color highlighting works for better/worse stats
+   ✓ Navigation between pages works correctly
+
+================================================================================
+NEXT STEPS / FUTURE ENHANCEMENTS
+================================================================================
+
+For Prediction Model:
+1. Add historical head-to-head records between specific teams
+2. Implement home/away split statistics
+3. Add recent form metrics (last 5-10 games)
+4. Calculate strength of schedule
+5. Create training dataset from past matchups
+6. Implement ML model (start with logistic regression)
+7. Add win probability predictions to matchup page
+8. Include confidence intervals and model accuracy metrics
+
+For Data Management:
+1. Add automated scheduling for data refresh
+2. Implement historical data archiving (more than 3 seasons)
+3. Add data validation and quality checks
+4. Create data export functionality
+5. Add caching layer for frequently accessed data
+
+For User Experience:
+1. Add player-vs-player comparison page
+2. Implement season trends and visualizations
+3. Add bookmarking/favorites for teams
+4. Create custom alerts for stat milestones
+5. Add playoff mode with bracket visualization
+
+================================================================================
+KNOWN ISSUES / LIMITATIONS
+================================================================================
+
+1. Early Season Data:
+   - NBA 2025-26 season has just started (October 2025)
+   - Player stats may be limited or unavailable until games are played
+   - This is expected behavior from the NBA Stats API
+
+2. Historical Data:
+   - Current database only contains 2023-2025 seasons
+   - Full historical data (1985-2024) exists in backup
+   - Can be restored if needed for trend analysis
+
+3. International League:
+   - International league filter defined but rarely has data
+   - NBA Stats API primarily focuses on NBA/WNBA
+
+4. Rate Limiting:
+   - NBA Stats API has rate limits
+   - Current sleep time: 1.2 seconds between calls
+   - May need adjustment if hitting limits
+
+================================================================================
+TECHNICAL NOTES
+================================================================================
+
+Database Schema:
+- LEAGUE_ID column added to both players_40y and teams_40y tables
+- Default value '00' for existing NBA data
+- WNBA data marked with '10'
+- Column type: VARCHAR
+
+API Parameters:
+- league_id_nullable parameter used in nba_api endpoints
+- Accepts: '00' (NBA), '10' (WNBA), '20' (G-League)
+- Must be string, not integer
+
+Season Format:
+- Format: "YYYY-YY" (e.g., "2024-25", "2025-26")
+- Represents the starting year and ending year
+- NBA/WNBA seasons run October through June
+
+Performance:
+- Harvester runs ~5-45 seconds per season depending on data volume
+- Database queries optimized with CTEs and proper indexing
+- Frontend uses async/await for non-blocking API calls
+
+================================================================================
+END OF SESSION LOG
+================================================================================

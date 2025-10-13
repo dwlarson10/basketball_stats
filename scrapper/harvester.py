@@ -64,9 +64,10 @@ def season_str(year_start: int) -> str:
 @dataclass
 class PullConfig:
     start_year: int = 1985
-    end_year: int = 2024  # inclusive start year; last season will be end_year–(end_year+1)
+    end_year: int = 2030  # inclusive start year; last season will be end_year–(end_year+1)
     season_type: str = "Regular Season"  # or "Playoffs"
     per_mode: str = "PerGame"           # or "Totals"
+    league_id: str = "00"               # "00" = NBA, "10" = WNBA, "20" = G-League
     out_dir: str = "data"
     duckdb_path: str | None = None
     sleep_sec: float = 1.2
@@ -81,12 +82,13 @@ class NbaApiError(Exception):
     wait=wait_exponential(multiplier=1.5, min=1, max=10),
     retry=retry_if_exception_type(Exception),
 )
-def _call_players(season: str, season_type: str, measure: str, per_mode: str) -> pd.DataFrame:
+def _call_players(season: str, season_type: str, measure: str, per_mode: str, league_id: str) -> pd.DataFrame:
     resp = leaguedashplayerstats.LeagueDashPlayerStats(
         season=season,
         season_type_all_star=season_type,
         per_mode_detailed=per_mode,
         measure_type_detailed_defense=measure,
+        league_id_nullable=league_id,
         timeout=30,
     )
     df = resp.get_data_frames()[0]
@@ -94,6 +96,7 @@ def _call_players(season: str, season_type: str, measure: str, per_mode: str) ->
     df.insert(1, "SEASON_TYPE", season_type)
     df.insert(2, "MEASURE", measure)
     df.insert(3, "PER_MODE", per_mode)
+    df.insert(4, "LEAGUE_ID", league_id)
     return df
 
 @retry(
@@ -102,12 +105,13 @@ def _call_players(season: str, season_type: str, measure: str, per_mode: str) ->
     wait=wait_exponential(multiplier=1.5, min=1, max=10),
     retry=retry_if_exception_type(Exception),
 )
-def _call_teams(season: str, season_type: str, measure: str, per_mode: str) -> pd.DataFrame:
+def _call_teams(season: str, season_type: str, measure: str, per_mode: str, league_id: str) -> pd.DataFrame:
     resp = leaguedashteamstats.LeagueDashTeamStats(
         season=season,
         season_type_all_star=season_type,
         per_mode_detailed=per_mode,
         measure_type_detailed_defense=measure,
+        league_id_nullable=league_id,
         timeout=30,
     )
     df = resp.get_data_frames()[0]
@@ -115,6 +119,7 @@ def _call_teams(season: str, season_type: str, measure: str, per_mode: str) -> p
     df.insert(1, "SEASON_TYPE", season_type)
     df.insert(2, "MEASURE", measure)
     df.insert(3, "PER_MODE", per_mode)
+    df.insert(4, "LEAGUE_ID", league_id)
     return df
 
 # -------------
@@ -134,14 +139,14 @@ def harvest(cfg: PullConfig) -> None:
     for s in tqdm(seasons, desc="Seasons"):
         for m in measures:
             try:
-                pdf = _call_players(s, cfg.season_type, m, cfg.per_mode)
+                pdf = _call_players(s, cfg.season_type, m, cfg.per_mode, cfg.league_id)
                 players_frames.append(pdf)
             except Exception as e:
                 print(f"[WARN] Players {s} {m}: {e}", file=sys.stderr)
             time.sleep(cfg.sleep_sec)
 
             try:
-                tdf = _call_teams(s, cfg.season_type, m, cfg.per_mode)
+                tdf = _call_teams(s, cfg.season_type, m, cfg.per_mode, cfg.league_id)
                 teams_frames.append(tdf)
             except Exception as e:
                 print(f"[WARN] Teams {s} {m}: {e}", file=sys.stderr)
@@ -176,10 +181,10 @@ def harvest(cfg: PullConfig) -> None:
         """).fetchone()[0] > 0
 
         if tables_exist:
-            # Incremental update: delete existing data for these seasons and insert new
+            # Incremental update: delete existing data for these seasons and league, then insert new
             seasons_list = ', '.join([f"'{s}'" for s in seasons])
-            con.execute(f"DELETE FROM players_40y WHERE SEASON IN ({seasons_list})")
-            con.execute(f"DELETE FROM teams_40y WHERE SEASON IN ({seasons_list})")
+            con.execute(f"DELETE FROM players_40y WHERE SEASON IN ({seasons_list}) AND LEAGUE_ID = '{cfg.league_id}'")
+            con.execute(f"DELETE FROM teams_40y WHERE SEASON IN ({seasons_list}) AND LEAGUE_ID = '{cfg.league_id}'")
 
             # Insert new data
             con.register("players_df", players)
@@ -204,9 +209,10 @@ def harvest(cfg: PullConfig) -> None:
 def parse_args() -> PullConfig:
     p = argparse.ArgumentParser(description="Harvest NBA player & team stats across seasons using nba_api.")
     p.add_argument("--start-year", type=int, default=1985, help="First season start year (e.g., 1985 → 1985-86)")
-    p.add_argument("--end-year", type=int, default=2024, help="Last season start year (e.g., 2024 → 2024-25)")
+    p.add_argument("--end-year", type=int, default=2030, help="Last season start year (e.g., 2024 → 2024-25)")
     p.add_argument("--season-type", type=str, default="Regular Season", choices=["Regular Season", "Playoffs"], help="SeasonType")
     p.add_argument("--per-mode", type=str, default="PerGame", choices=["PerGame", "Totals"], help="Per-mode for endpoints")
+    p.add_argument("--league-id", type=str, default="00", choices=["00", "10", "20"], help="League ID: 00=NBA, 10=WNBA, 20=G-League")
     p.add_argument("--out", type=str, required=True, help="Output directory for Parquet files")
     p.add_argument("--duckdb", type=str, default=None, help="Optional DuckDB file path to write tables")
     p.add_argument("--sleep", type=float, default=1.2, help="Seconds to sleep between calls")
@@ -216,6 +222,7 @@ def parse_args() -> PullConfig:
         end_year=a.end_year,
         season_type=a.season_type,
         per_mode=a.per_mode,
+        league_id=a.league_id,
         out_dir=a.out,
         duckdb_path=a.duckdb,
         sleep_sec=a.sleep,
